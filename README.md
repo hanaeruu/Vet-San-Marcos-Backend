@@ -99,7 +99,9 @@ La base de datos utilizada se encuentra en Amazon RDS y contiene las tablas `cli
 | Ruta privada con JWT válido | HTTP 200 |
 | Listado solicitado por un cliente | HTTP 403 |
 
-Las comprobaciones anteriores se realizaron mediante solicitudes HTTP desde la instancia EC2. La prueba del registro en Postman y las operaciones administrativas completas están pendientes.
+El registro de usuarios fue probado correctamente desde Postman, con respuesta HTTP 201. También se verificó que la cuenta quedó guardada en Amazon RDS y relacionada con su ficha de cliente.
+
+El inicio de sesión con JWT y las rutas protegidas fueron comprobados mediante solicitudes HTTP. Las operaciones administrativas de listar, modificar y desactivar usuarios permanecen en avance.
 
 ## Próximos pasos
 
