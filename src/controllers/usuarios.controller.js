@@ -110,4 +110,66 @@ async function modificarUsuario(req, res) {
   }
 }
 
-module.exports = { listarUsuarios, modificarUsuario }
+async function desactivarUsuario(req, res) {
+  // 1. Solo un administrador puede desactivar cuentas
+  if (req.usuario?.rol !== 'admin') {
+    return res.status(403).json({
+      error: 'No tienes permiso para desactivar usuarios'
+    })
+  }
+
+  // 2. Obtener el identificador del usuario
+  const { id } = req.params
+
+  const uuidValido =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  if (!uuidValido.test(id)) {
+    return res.status(400).json({
+      error: 'Identificador de usuario inválido'
+    })
+  }
+
+  // 3. Impedir que el administrador se desactive
+  if (id === req.usuario.id) {
+    return res.status(400).json({
+      error: 'No puedes desactivar tu propia cuenta'
+    })
+  }
+
+  try {
+    // 4. Desactivar sin eliminar la información
+    // Por seguridad, no se desactivan administradores
+    const resultado = await db.query(`
+      UPDATE usuarios
+      SET activo = FALSE
+      WHERE id = $1
+        AND rol <> 'admin'
+      RETURNING id, nombre, correo, rol, activo
+    `, [id])
+
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({
+        error: 'Usuario no encontrado o no se puede desactivar'
+      })
+    }
+
+    // 5. Confirmar el resultado
+    return res.status(200).json({
+      mensaje: 'Usuario desactivado correctamente',
+      usuario: resultado.rows[0]
+    })
+  } catch (error) {
+    console.error('Error al desactivar usuario:', error.code)
+
+    return res.status(500).json({
+      error: 'No se pudo desactivar el usuario'
+    })
+  }
+}
+
+module.exports = {
+  listarUsuarios,
+  modificarUsuario,
+  desactivarUsuario
+}
