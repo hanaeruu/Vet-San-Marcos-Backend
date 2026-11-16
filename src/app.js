@@ -3,6 +3,7 @@ const cors = require('cors')
 const saludoRoutes = require('./routes/saludo.routes')
 const mascotasRoutes = require('./routes/mascotas.routes')
 const authRoutes = require('./routes/auth.routes')
+const usuariosRoutes = require('./routes/usuarios.routes')
 
 const app = express()
 
@@ -11,6 +12,7 @@ app.use(express.json())
 app.use('/api', saludoRoutes)
 app.use('/api', mascotasRoutes)
 app.use('/api', authRoutes)
+app.use('/api', usuariosRoutes)
 
 app.use((req, res) => {
   res.status(404).json({
