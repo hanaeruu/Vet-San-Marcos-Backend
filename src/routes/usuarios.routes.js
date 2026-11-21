@@ -7,11 +7,26 @@ const {
   desactivarUsuario
 } = require('../controllers/usuarios.controller')
 
-// Consultar usuarios
+const {
+  obtenerUsuario,
+  modificarDatos,
+  crearUsuario
+} = require('../controllers/usuarios.cuenta.controller')
+
+// Consultar usuarios (administrador)
 router.get('/usuarios', verificarToken, listarUsuarios)
 
-// Modificar el rol de un usuario
+// Crear usuario con rol (administrador)
+router.post('/usuarios', verificarToken, crearUsuario)
+
+// Ver una cuenta (propia o administrador)
+router.get('/usuarios/:id', verificarToken, obtenerUsuario)
+
+// Modificar el rol de un usuario (administrador)
 router.put('/usuarios/:id', verificarToken, modificarUsuario)
+
+// Modificar nombre y correo (propia cuenta o administrador)
+router.patch('/usuarios/:id', verificarToken, modificarDatos)
 
 // Desactivar un usuario sin borrar sus datos
 router.patch(

@@ -1,7 +1,4 @@
-const express = require('express')
-const router = express.Router()
-const saludoController = require('../controllers/saludo.controller')
-
-router.get('/saludo', saludoController.obtenerSaludo)
-
+const router = require('express').Router()
+const controlador = require('../controllers/saludo.controller')
+router.get('/saludo', controlador.saludar)
 module.exports = router

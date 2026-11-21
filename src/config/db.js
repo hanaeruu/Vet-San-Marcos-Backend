@@ -1,6 +1,5 @@
 const { Pool } = require('pg')
 const { readFileSync } = require('node:fs')
-
 const pool = new Pool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT || 5432),
@@ -15,9 +14,14 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 10000
 })
-
-pool.on('error', () => {
-  console.error('Error en una conexión inactiva con PostgreSQL')
+pool.on('error', (error) => {
+  console.error('Error de pool:', error.code || 'DB_ERROR')
 })
-
 module.exports = pool
+
+pool.query('SELECT 1')
+  .then(() => console.log('BD conectada'))
+  .catch((error) => {
+    console.error('No se pudo conectar a la BD:', error.code || error.message)
+    process.exit(1)
+  })

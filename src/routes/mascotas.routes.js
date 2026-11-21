@@ -1,8 +1,8 @@
-const express = require('express')
-const router = express.Router()
-const mascotasController = require('../controllers/mascotas.controller')
+const router = require('express').Router()
+const { verificarToken } = require('../middleware/verificarToken')
+const controlador = require('../controllers/mascotas.controller')
 
-router.get('/mascotas', mascotasController.listarMascotas)
-router.post('/mascotas', mascotasController.crearMascota)
+router.get('/mascotas', verificarToken, controlador.listarMascotas)
+router.post('/mascotas', verificarToken, controlador.crearMascota)
 
 module.exports = router

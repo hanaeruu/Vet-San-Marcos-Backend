@@ -189,7 +189,9 @@ async function iniciarSesion(req, res) {
     // 7. Devolver el token y los datos públicos
     return res.status(200).json({
       mensaje: 'Inicio de sesión correcto',
-      token,
+      accessToken: token,
+      tokenType: 'Bearer',
+      expiresIn: 3600,
       usuario: {
         id: usuario.id,
         clienteId: usuario.cliente_id,

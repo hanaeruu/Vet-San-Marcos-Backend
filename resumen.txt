@@ -1,0 +1,845 @@
+=== ARCHIVOS ===
+./.env
+./.gitignore
+./db/schema.sql
+./package.json
+./readme.md
+./resumen.txt
+./server.js
+./src/app.js
+./src/config/db.js
+./src/controllers/auth.controller.js
+./src/controllers/mascotas.controller.js
+./src/controllers/saludo.controller.js
+./src/controllers/usuarios.controller.js
+./src/controllers/usuarios.cuenta.controller.js
+./src/middleware/verificarToken.js
+./src/routes/auth.routes.js
+./src/routes/mascotas.routes.js
+./src/routes/saludo.routes.js
+./src/routes/usuarios.routes.js
+
+=== ./src/config/db.js ===
+const { Pool } = require('pg')
+const { readFileSync } = require('node:fs')
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT || 5432),
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  ssl: {
+    ca: readFileSync(process.env.DB_CA_FILE, 'utf8'),
+    rejectUnauthorized: true
+  },
+  max: 2,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 10000
+})
+pool.on('error', (error) => {
+  console.error('Error de pool:', error.code || 'DB_ERROR')
+})
+module.exports = pool
+
+pool.query('SELECT 1')
+  .then(() => console.log('BD conectada'))
+  .catch((error) => {
+    console.error('No se pudo conectar a la BD:', error.code || error.message)
+    process.exit(1)
+  })
+
+=== ./src/controllers/usuarios.cuenta.controller.js ===
+const db = require('../config/db')
+
+// Usa el mismo paquete de hash que el registro
+let bcrypt
+try { bcrypt = require('bcrypt') } catch { bcrypt = require('bcryptjs') }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const CORREO = /^\S+@\S+\.\S+$/
+const ROLES = ['cliente', 'admin', 'recepcion', 'veterinario', 'tecnico']
+
+const nombreValido = (n) =>
+  typeof n === 'string' && n.trim() !== '' && n.trim().length <= 100
+const correoValido = (c) =>
+  typeof c === 'string' && c.trim().length <= 254 && CORREO.test(c.trim())
+
+// Ver un usuario: solo su propia cuenta o el administrador
+async function obtenerUsuario(req, res) {
+  const { id } = req.params
+
+  if (!UUID.test(id)) {
+    return res.status(400).json({ error: 'Identificador no válido' })
+  }
+
+  if (req.usuario?.rol !== 'admin' && req.usuario?.id !== id) {
+    return res.status(403).json({
+      error: 'No tienes permiso para ver esta cuenta'
+    })
+  }
+
+  try {
+    const resultado = await db.query(`
+      SELECT id, nombre, correo, rol, activo, creado_en AS "creadoEn"
+      FROM usuarios
+      WHERE id = $1
+    `, [id])
+
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' })
+    }
+
+    return res.status(200).json({ usuario: resultado.rows[0] })
+  } catch (error) {
+    console.error('Error al consultar usuario:', error.code)
+    return res.status(500).json({
+      error: 'No se pudo consultar el usuario'
+    })
+  }
+}
+
+// Modificar nombre y correo: solo la propia cuenta o el administrador
+async function modificarDatos(req, res) {
+  const { id } = req.params
+
+  if (!UUID.test(id)) {
+    return res.status(400).json({ error: 'Identificador no válido' })
+  }
+
+  if (req.usuario?.rol !== 'admin' && req.usuario?.id !== id) {
+    return res.status(403).json({
+      error: 'No tienes permiso para modificar esta cuenta'
+    })
+  }
+
+  const { nombre, correo, rol } = req.body || {}
+
+  // El rol solo se cambia en PUT /usuarios/:id (administrador)
+  if (rol !== undefined) {
+    return res.status(400).json({
+      error: 'El rol no se modifica en esta ruta'
+    })
+  }
+
+  if (nombre === undefined && correo === undefined) {
+    return res.status(400).json({ error: 'No hay datos para modificar' })
+  }
+
+  if (
+    (nombre !== undefined && !nombreValido(nombre)) ||
+    (correo !== undefined && !correoValido(correo))
+  ) {
+    return res.status(400).json({ error: 'Nombre o correo no válidos' })
+  }
+
+  const nombreLimpio = nombre !== undefined ? nombre.trim() : null
+  const correoLimpio =
+    correo !== undefined ? correo.trim().toLowerCase() : null
+
+  const conexion = await db.connect()
+
+  try {
+    await conexion.query('BEGIN')
+
+    const resultado = await conexion.query(`
+      UPDATE usuarios
+      SET nombre = COALESCE($2, nombre),
+          correo = COALESCE($3, correo)
+q
+\q
+cat > src/routes/usuarios.routes.js <<'EOF'
+const router = require('express').Router()
+const { verificarToken } = require('../middleware/verificarToken')
+
+const {
+  listarUsuarios,
+  modificarUsuario,
+  desactivarUsuario
+} = require('../controllers/usuarios.controller')
+
+const {
+  obtenerUsuario,
+  modificarDatos,
+  crearUsuario
+} = require('../controllers/usuarios.cuenta.controller')
+
+// Consultar usuarios (administrador)
+router.get('/usuarios', verificarToken, listarUsuarios)
+
+// Crear usuario con rol (administrador)
+router.post('/usuarios', verificarToken, crearUsuario)
+
+// Ver una cuenta (propia o administrador)
+router.get('/usuarios/:id', verificarToken, obtenerUsuario)
+
+// Modificar el rol de un usuario (administrador)
+router.put('/usuarios/:id', verificarToken, modificarUsuario)
+
+// Modificar nombre y correo (propia cuenta o administrador)
+router.patch('/usuarios/:id', verificarToken, modificarDatos)
+
+// Desactivar un usuario sin borrar sus datos
+router.patch(
+  '/usuarios/:id/desactivar',
+  verificarToken,
+  desactivarUsuario
+)
+
+module.exports = router
+
+=== ./src/controllers/saludo.controller.js ===
+exports.saludar = (req, res) => {
+  const nombre = String(req.query.nombre || 'estudiante')
+    .slice(0, 60)
+  res.json({
+    mensaje: `Hola, ${nombre}`,
+    backend: 'Node.js + Express en EC2',
+    lenguaje: 'Node.js'
+  })
+}
+
+=== ./src/controllers/usuarios.controller.js ===
+
+const db = require('../config/db')
+
+// Obtiene los usuarios registrados
+async function listarUsuarios(req, res) {
+
+  // Solo el administrador puede ver el listado
+  if (req.usuario?.rol !== 'admin') {
+    return res.status(403).json({
+      error: 'No tienes permiso para ver los usuarios'
+    })
+  }
+
+  try {
+    // Consultar los usuarios en PostgreSQL
+    const resultado = await db.query(`
+      SELECT
+        id,
+        nombre,
+        correo,
+        rol,
+        activo,
+        creado_en AS "creadoEn"
+      FROM usuarios
+      ORDER BY creado_en DESC
+      LIMIT 100
+    `)
+
+    // Devolver el listado sin contraseñas
+    return res.status(200).json({
+      usuarios: resultado.rows
+    })
+
+  } catch (error) {
+    console.error('Error al listar usuarios:', error.code)
+
+    return res.status(500).json({
+      error: 'No se pudieron consultar los usuarios'
+    })
+  }
+}
+
+async function modificarUsuario(req, res) {
+  // Solo los administradores pueden modificar usuarios
+  if (req.usuario?.rol !== 'admin') {
+    return res.status(403).json({
+      error: 'No tienes permiso para modificar usuarios'
+    })
+  }
+
+  const { id } = req.params
+  const { rol } = req.body || {}
+
+  // Comprobar el identificador
+  const uuidValido =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  if (!uuidValido.test(id)) {
+    return res.status(400).json({
+      error: 'Identificador de usuario inválido'
+    })
+  }
+
+  // Solo permitir roles conocidos
+  const rolesPermitidos = [
+    'cliente',
+    'admin',
+    'recepcion',
+    'veterinario',
+    'tecnico'
+  ]
+
+  if (!rolesPermitidos.includes(rol)) {
+    return res.status(400).json({
+      error: 'Rol no válido'
+    })
+  }
+
+  // Evitar que un administrador cambie su propio rol
+  if (id === req.usuario.id) {
+    return res.status(400).json({
+      error: 'No puedes modificar tu propio rol'
+    })
+  }
+
+  try {
+    const resultado = await db.query(`
+      UPDATE usuarios
+      SET rol = $1
+      WHERE id = $2
+      RETURNING id, nombre, correo, rol, activo
+    `, [rol, id])
+
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({
+        error: 'Usuario no encontrado'
+      })
+    }
+
+    return res.status(200).json({
+      mensaje: 'Usuario actualizado correctamente',
+      usuario: resultado.rows[0]
+    })
+  } catch (error) {
+    console.error('Error al modificar usuario:', error.code)
+
+    return res.status(500).json({
+      error: 'No se pudo modificar el usuario'
+    })
+  }
+}
+
+async function desactivarUsuario(req, res) {
+  // 1. Solo un administrador puede desactivar cuentas
+  if (req.usuario?.rol !== 'admin') {
+    return res.status(403).json({
+      error: 'No tienes permiso para desactivar usuarios'
+    })
+  }
+
+  // 2. Obtener el identificador del usuario
+  const { id } = req.params
+
+  const uuidValido =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  if (!uuidValido.test(id)) {
+    return res.status(400).json({
+      error: 'Identificador de usuario inválido'
+    })
+  }
+
+  // 3. Impedir que el administrador se desactive
+  if (id === req.usuario.id) {
+    return res.status(400).json({
+      error: 'No puedes desactivar tu propia cuenta'
+    })
+  }
+
+  try {
+    // 4. Desactivar sin eliminar la información
+    // Por seguridad, no se desactivan administradores
+    const resultado = await db.query(`
+      UPDATE usuarios
+      SET activo = FALSE
+      WHERE id = $1
+        AND rol <> 'admin'
+      RETURNING id, nombre, correo, rol, activo
+    `, [id])
+
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({
+        error: 'Usuario no encontrado o no se puede desactivar'
+      })
+    }
+
+    // 5. Confirmar el resultado
+    return res.status(200).json({
+      mensaje: 'Usuario desactivado correctamente',
+      usuario: resultado.rows[0]
+    })
+  } catch (error) {
+    console.error('Error al desactivar usuario:', error.code)
+
+    return res.status(500).json({
+      error: 'No se pudo desactivar el usuario'
+    })
+  }
+}
+
+module.exports = {
+  listarUsuarios,
+  modificarUsuario,
+  desactivarUsuario
+}
+
+=== ./src/controllers/mascotas.controller.js ===
+const db = require('../config/db')
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Un cliente solo ve y crea mascotas propias; el resto de roles, todas
+const esCliente = (req) => req.usuario?.rol === 'cliente'
+
+exports.listarMascotas = async (req, res) => {
+  let filtroCliente = null
+
+  if (esCliente(req)) {
+    filtroCliente = req.usuario.clienteId
+    if (!filtroCliente) {
+      return res.status(403).json({
+        error: 'Tu cuenta no tiene una ficha de cliente'
+      })
+    }
+  }
+
+  try {
+    const resultado = await db.query(`
+      SELECT m.id, m.cliente_id AS "clienteId", m.nombre,
+        m.especie, m.raza, m.sexo,
+        m.fecha_nacimiento AS "fechaNacimiento",
+        m.peso_kg AS "pesoKg", m.color, m.microchip,
+        m.activo, m.creado_en AS "creadoEn",
+        c.correo AS "tutorCorreo"
+      FROM mascotas m
+      JOIN clientes c ON c.id = m.cliente_id
+      WHERE m.activo = TRUE
+        AND ($1::uuid IS NULL OR m.cliente_id = $1::uuid)
+      ORDER BY m.creado_en DESC, m.id
+    `, [filtroCliente])
+
+    return res.status(200).json(resultado.rows)
+  } catch (error) {
+    console.error('Error GET mascotas:', error.code || 'DB_ERROR')
+    return res.status(500).json({ error: 'Error al consultar mascotas' })
+  }
+}
+
+exports.crearMascota = async (req, res) => {
+  const { nombre, especie } = req.body || {}
+
+  // Cliente: siempre para sí mismo. Personal: indica clienteId en el body
+  const clienteId = esCliente(req)
+    ? req.usuario.clienteId
+    : req.body?.clienteId
+
+  if (typeof clienteId !== 'string' || !uuid.test(clienteId) ||
+      typeof nombre !== 'string' || !nombre.trim() ||
+      nombre.trim().length > 100 ||
+      typeof especie !== 'string' || !especie.trim() ||
+      especie.trim().length > 40) {
+    return res.status(400).json({
+      error: 'Revisa clienteId, nombre y especie'
+    })
+  }
+
+  try {
+    const resultado = await db.query(`
+      INSERT INTO mascotas (cliente_id, nombre, especie)
+      SELECT id, $2, $3 FROM clientes
+      WHERE id = $1 AND activo = TRUE
+      RETURNING id, cliente_id AS "clienteId", nombre,
+        especie, activo, creado_en AS "creadoEn"
+    `, [clienteId, nombre.trim(), especie.trim()])
+
+    if (resultado.rowCount === 0) {
+      return res.status(400).json({
+        error: 'El cliente no existe o esta inactivo'
+      })
+    }
+
+    return res.status(201).json(resultado.rows[0])
+  } catch (error) {
+    console.error('Error POST mascotas:', error.code || 'DB_ERROR')
+    return res.status(500).json({ error: 'Error al crear mascota' })
+  }
+}
+=== ./src/controllers/auth.controller.js ===
+
+const db = require('../config/db')
+const bcrypt = require('bcryptjs')
+const jwt = require('jsonwebtoken')
+// Registra un nuevo dueño de mascota
+async function registrarUsuario(req, res) {
+  const { nombre, correo, contrasena } = req.body || {}
+
+  // 1. Validar los datos recibidos
+  if (
+    typeof nombre !== 'string' ||
+    typeof correo !== 'string' ||
+    typeof contrasena !== 'string'
+  ) {
+    return res.status(400).json({
+      error: 'Nombre, correo y contraseña son obligatorios'
+    })
+  }
+
+  const nombreLimpio = nombre.trim()
+  const correoLimpio = correo.trim().toLowerCase()
+
+  if (
+    !nombreLimpio ||
+    nombreLimpio.length > 100 ||
+    correoLimpio.length > 254 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoLimpio) ||
+    contrasena.length < 8 ||
+    Buffer.byteLength(contrasena, 'utf8') > 72
+  ) {
+    return res.status(400).json({
+      error: 'Revisa el nombre, correo y contraseña'
+    })
+  }
+
+  let conexion
+
+  try {
+    // 2. Proteger la contraseña
+    const hash = await bcrypt.hash(contrasena, 12)
+
+    // 3. Iniciar una operación conjunta en PostgreSQL
+    conexion = await db.connect()
+    await conexion.query('BEGIN')
+
+    // 4. Evitar correos duplicados
+    const existe = await conexion.query(`
+      SELECT correo FROM usuarios WHERE correo = $1
+      UNION
+      SELECT correo FROM clientes WHERE correo = $1
+      LIMIT 1
+    `, [correoLimpio])
+
+    if (existe.rowCount > 0) {
+      await conexion.query('ROLLBACK')
+
+      return res.status(409).json({
+        error: 'Este correo ya está registrado'
+      })
+    }
+
+    // 5. Crear la ficha del cliente
+    const cliente = await conexion.query(`
+      INSERT INTO clientes (nombre, correo)
+      VALUES ($1, $2)
+      RETURNING id
+    `, [nombreLimpio, correoLimpio])
+
+    // 6. Crear su cuenta de acceso
+    const resultado = await conexion.query(`
+      INSERT INTO usuarios (
+        cliente_id,
+        nombre,
+        correo,
+        contrasena_hash
+      )
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, nombre, correo, rol, activo
+    `, [
+      cliente.rows[0].id,
+      nombreLimpio,
+      correoLimpio,
+      hash
+    ])
+
+    // 7. Guardar ambas operaciones
+    await conexion.query('COMMIT')
+
+    return res.status(201).json({
+      mensaje: 'Usuario registrado correctamente',
+      usuario: resultado.rows[0]
+    })
+  } catch (error) {
+    if (conexion) {
+      try {
+        await conexion.query('ROLLBACK')
+      } catch {
+        // La conexión podría haberse interrumpido
+      }
+    }
+
+    if (error.code === '23505') {
+      return res.status(409).json({
+        error: 'Este correo ya está registrado'
+      })
+    }
+
+    console.error('Error al registrar:', error.code || error.message)
+
+    return res.status(500).json({
+      error: 'No se pudo registrar el usuario'
+    })
+  } finally {
+    if (conexion) {
+      conexion.release()
+    }
+  }
+}
+
+async function iniciarSesion(req, res) {
+  // 1. Recibir el correo y la contraseña
+  const { correo, contrasena } = req.body || {}
+
+  // 2. Validar los datos
+  if (
+    typeof correo !== 'string' ||
+    typeof contrasena !== 'string' ||
+    !correo.trim() ||
+    !contrasena
+  ) {
+    return res.status(400).json({
+      error: 'Correo y contraseña son obligatorios'
+    })
+  }
+
+  try {
+    // 3. Buscar el usuario en RDS
+    const resultado = await db.query(`
+      SELECT
+        id, cliente_id, nombre, correo,
+        contrasena_hash, rol, activo
+      FROM usuarios
+      WHERE correo = $1
+    `, [correo.trim().toLowerCase()])
+
+    const usuario = resultado.rows[0]
+
+    // 4. Comprobar la contraseña y el estado
+    if (!usuario) {
+      return res.status(401).json({
+        error: 'Credenciales incorrectas'
+      })
+    }
+
+    const claveCorrecta = await bcrypt.compare(
+      contrasena,
+      usuario.contrasena_hash
+    )
+
+    if (!claveCorrecta || !usuario.activo) {
+      return res.status(401).json({
+        error: 'Credenciales incorrectas'
+      })
+    }
+
+    // 5. Comprobar la clave privada
+    const secreto = process.env.JWT_SECRET
+
+    if (!secreto || secreto.length < 64) {
+      console.error('JWT_SECRET no está configurada')
+      return res.status(500).json({
+        error: 'No se pudo iniciar sesión'
+      })
+    }
+
+    // 6. Generar un JWT válido durante 1 hora
+    const token = jwt.sign(
+      { rol: usuario.rol },
+      secreto,
+      {
+        algorithm: 'HS256',
+        subject: usuario.id,
+        expiresIn: '1h',
+        issuer: 'vet-san-marcos-api',
+        audience: 'vet-san-marcos'
+      }
+    )
+
+    // 7. Devolver el token y los datos públicos
+    return res.status(200).json({
+      mensaje: 'Inicio de sesión correcto',
+      token,
+      usuario: {
+        id: usuario.id,
+        clienteId: usuario.cliente_id,
+        nombre: usuario.nombre,
+        correo: usuario.correo,
+        rol: usuario.rol
+      }
+    })
+  } catch (error) {
+    console.error(
+      'Error de autenticación:',
+      error.code || error.message
+    )
+
+    return res.status(500).json({
+      error: 'No se pudo iniciar sesión'
+    })
+  }
+}
+
+module.exports = { registrarUsuario, iniciarSesion }
+=== ./src/middleware/verificarToken.js ===
+
+const jwt = require('jsonwebtoken')
+const db = require('../config/db')
+
+// Comprueba el JWT antes de permitir el acceso
+async function verificarToken(req, res, next) {
+  const encabezado = req.headers.authorization || ''
+  const coincidencia = encabezado.match(/^Bearer\s+(\S+)$/i)
+
+  // 1. Exigir un token
+  if (!coincidencia) {
+    return res.status(401).json({
+      error: 'Debes iniciar sesión'
+    })
+  }
+
+  // 2. Comprobar la configuración privada
+  const secreto = process.env.JWT_SECRET
+
+  if (!secreto || secreto.length < 64) {
+    return res.status(500).json({
+      error: 'Error de configuración del servidor'
+    })
+  }
+
+  let datosToken
+
+  // 3. Verificar firma, duración y destinatario
+  try {
+    datosToken = jwt.verify(coincidencia[1], secreto, {
+      algorithms: ['HS256'],
+      issuer: 'vet-san-marcos-api',
+      audience: 'vet-san-marcos'
+    })
+  } catch {
+    return res.status(401).json({
+      error: 'Token inválido o vencido'
+    })
+  }
+
+  try {
+    // 4. Comprobar que el usuario siga activo en RDS
+    const resultado = await db.query(`
+      SELECT id, cliente_id, nombre, correo, rol, activo
+      FROM usuarios
+      WHERE id = $1
+    `, [datosToken.sub])
+
+    const usuario = resultado.rows[0]
+
+    if (
+      !usuario ||
+      !usuario.activo ||
+      usuario.rol !== datosToken.rol
+    ) {
+      return res.status(401).json({
+        error: 'Acceso no autorizado'
+      })
+    }
+
+    // 5. Guardar los datos públicos del usuario
+    req.usuario = {
+      id: usuario.id,
+      clienteId: usuario.cliente_id,
+      nombre: usuario.nombre,
+      correo: usuario.correo,
+      rol: usuario.rol
+    }
+
+    // 6. Permitir continuar a la ruta protegida
+    return next()
+  } catch (error) {
+    console.error('Error al comprobar usuario:', error.code)
+
+    return res.status(500).json({
+      error: 'No se pudo comprobar la sesión'
+    })
+  }
+}
+
+module.exports = { verificarToken } 
+=== ./src/app.js ===
+const express = require('express')
+const cors = require('cors')
+const saludoRoutes = require('./routes/saludo.routes')
+const mascotasRoutes = require('./routes/mascotas.routes')
+const authRoutes = require('./routes/auth.routes')
+const usuariosRoutes = require('./routes/usuarios.routes')
+const app = express()
+app.use(cors())
+app.use(express.json({ limit: '16kb' }))
+app.use('/api', saludoRoutes)
+app.use('/api', mascotasRoutes)
+app.use('/api/v1', authRoutes)
+app.use('/api/v1', usuariosRoutes)
+app.use(cors({ origin: process.env.FRONTEND_URL }))
+app.use((req, res) => {
+  res.status(404).json({ error: 'Ruta no encontrada' })
+})
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'JSON invalido' })
+  }
+  console.error('Error:', err.message)
+  res.status(500).json({ error: 'Error interno' })
+})
+module.exports = app
+
+=== ./src/routes/mascotas.routes.js ===
+const router = require('express').Router()
+const { verificarToken } = require('../middleware/verificarToken')
+const controlador = require('../controllers/mascotas.controller')
+
+router.get('/mascotas', verificarToken, controlador.listarMascotas)
+router.post('/mascotas', verificarToken, controlador.crearMascota)
+
+module.exports = router
+=== ./src/routes/usuarios.routes.js ===
+const router = require('express').Router()
+const { verificarToken } = require('../middleware/verificarToken')
+
+const {
+  listarUsuarios,
+  modificarUsuario,
+  desactivarUsuario
+} = require('../controllers/usuarios.controller')
+
+// Consultar usuarios
+router.get('/usuarios', verificarToken, listarUsuarios)
+
+// Modificar el rol de un usuario
+router.put('/usuarios/:id', verificarToken, modificarUsuario)
+
+// Desactivar un usuario sin borrar sus datos
+router.patch(
+  '/usuarios/:id/desactivar',
+  verificarToken,
+  desactivarUsuario
+)
+
+module.exports = router
+
+=== ./src/routes/auth.routes.js ===
+const router = require('express').Router()
+const authController = require('../controllers/auth.controller')
+const { verificarToken } = require('../middleware/verificarToken')
+
+// Crear cuenta
+router.post('/auth/registro', authController.registrarUsuario)
+
+// Iniciar sesión y obtener JWT
+router.post('/auth/login', authController.iniciarSesion)
+
+// Consultar mi cuenta, requiere JWT válido
+router.get('/auth/me', verificarToken, (req, res) => {
+  return res.status(200).json({
+    usuario: req.usuario
+  })
+})
+
+module.exports = router
+=== ./src/routes/saludo.routes.js ===
+const router = require('express').Router()
+const controlador = require('../controllers/saludo.controller')
+router.get('/saludo', controlador.saludar)
+module.exports = router
+
+=== ./server.js ===
+const app = require('./src/app')
+const puerto = Number(process.env.PORT || 3000)
+app.listen(puerto, '0.0.0.0', () => {
+  console.log(`API Express lista en puerto ${puerto}`)
+})
